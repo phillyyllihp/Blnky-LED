@@ -41,12 +41,49 @@ struct rcc {
 #define RCC ((struct rcc *) 0x40021000)
 
 // enum gpio ports
-enum {GPIO_A, GPIO_B, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
+enum {GPIO_A, GPIO_B3, GPIO_C, GPIO_D, GPIO_E, GPIO_F};
 
 // function to enable or disable IO port clock
 static inline void io_port_en(uint16_t bank, bool val) {
   RCC->IOPENR &= ~(1U << bank);           // clear existing setting
   RCC->IOPENR |= (val << bank);           // apply new setting
+}
+
+// create a structure for the systick register
+struct stk {
+  volatile uint32_t CSR, RVR, CVR, CALIB;
+};
+
+// define the location of the systick register
+#define STK ((struct stk *) 0xE000E010)
+
+// function to initiate the ARM systick timer PM0223 datasheet
+static inline void SysTick_init(uint32_t ticks) {
+  if ((ticks-1) > 0xFFFFFF) return;               // limited to 24 bit timer
+  STK->RVR = ticks-1;                             // set the value to be loaded 
+  STK->CVR = 0;                                   // reset the current value to 0
+  STK->CSR = BIT(0) | BIT(1) | BIT(2);            // set the enable bit to 1
+  RCC->APBENR2 |= BIT(0);                         // Enable the SYSCFG clock
+}
+
+// function to handle SysTick interupt
+static volatile uint32_t s_ticks;
+void SysTick_Handler(void) {
+  s_ticks++;
+}
+
+void delay(unsigned ms) {
+  uint32_t wait = s_ticks + ms;                   // time to wait 
+  while(s_ticks < wait) (void) 0;                 // wait until its time    
+}
+
+// t: expiration time, prd: period, now: current time. Return true if expired
+bool timer_expired(uint32_t *t, uint32_t prd, uint32_t now) {
+  if (now + prd < *t) *t = 0;                    // Time wrapped? Reset timer
+  if (*t == 0) *t = now + prd;                   // First poll? Set expiration
+  if (*t > now) return false;                    // Not expired yet, return
+  *t = (now - *t) > prd ? now + prd : *t + prd;  // Next expiration time
+  return true;                                   // Expired, return true
 }
 
 static inline void spin(volatile uint32_t count) {
@@ -58,15 +95,20 @@ static inline void spin(volatile uint32_t count) {
 // main function
 // turns on 
 int main(void) {
+    
+    SysTick_init(16000000 / 1000);                     // intialize the SysTick to count every 1ms | 1khz
+    
     uint16_t usr_led = PIN('A', 5);                    // pin for user accessed LED (should be green)
     io_port_en(PINBANK(usr_led), true);                // Enable I/O port for this bank
     gpio_set_mode(usr_led, GPO_MODE);                  // set pin for user accessed LED to output mode
-                             
-    for (;;) {
-      gpio_write(usr_led, true);
-      spin(999999);
-      gpio_write(usr_led, false);
-      spin(999999);
+    
+    uint32_t timer, period=500;                         // create timer var and set period to 500ms                   
+    while(1) {
+      if (timer_expired(&timer, period, s_ticks)) {
+        static bool on;
+        gpio_write(usr_led, on);
+        on = !on;
+      }
     }                                
     return 0;
 }
@@ -88,4 +130,4 @@ extern void _estack(void);  // Defined in link.ld
 
 // 16 standard and 32 STM32-specific handlers
 __attribute__((section(".vectors"))) void (*const tab[16 + 32])(void) = {
-    _estack, _reset};
+    _estack, _reset, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, SysTick_Handler};
