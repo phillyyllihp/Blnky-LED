@@ -144,7 +144,7 @@ static volatile uint32_t button_mode;                // volatile var to store bu
 // function to handle interrupt on EXTI lines 4 to 15
 void EXTI4_15_Handler(void) {
 
-  spin(999);
+  spin(10000);
   
   button_mode++;                                    // increase the speed multiplier from 1 to 3                            
   if (button_mode > 3) {
@@ -176,7 +176,7 @@ int main(void) {
     uint32_t timer;                                    // create timer var and set period to 166ms                
     while(1) {
       
-      uint32_t period = button_mode * 250;             // set the period to rely on the button mode
+      uint32_t period = button_mode*button_mode * 100;             // set the period to rely on the button mode
       if (timer_expired(&timer, period, s_ticks)) {
         static bool on;
         gpio_write(usr_led, on);
